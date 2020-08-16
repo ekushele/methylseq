@@ -25,8 +25,8 @@ regexes = {
     'Picard CollectGcBiasMetrics': ['v_picard_collectgcbias.txt', r"([\d\.]+)"],
     'samblaster': ['v_samblaster.txt', r"samblaster: Version (\S+)"],
     'biscuit': ['v_biscuit.txt', r"Version: (\S+)"],
-	'fastasort': ['v_fastasort.txt', r"fastasort from exonerate version (\S+)"],
-	'MethylDackel': ['v_methyldackel.txt', r"(.+)"],
+    'bcftools': ['v_bcftools.txt', r"bcftools (\S+)"],
+    'MethylDackel': ['v_methyldackel.txt', r"(.+)"],
     'Qualimap': ['v_qualimap.txt', r"QualiMap v.(\S+)"],
     'Preseq': ['v_preseq.txt', r"Version: (\S+)"],
     'MultiQC': ['v_multiqc.txt', r"multiqc, version (\S+)"],
@@ -54,10 +54,10 @@ results['Preseq'] = '<span style="color:#999999;\">N/A</span>'
 results['MultiQC'] = '<span style="color:#999999;\">N/A</span>'
 results['samblaster'] = '<span style="color:#999999;\">N/A</span>'
 results['biscuit'] = '<span style="color:#999999;\">N/A</span>'
-results['fastasort'] = '<span style="color:#999999;\">N/A</span>'
 results['Picard CreateSequenceDictionary'] = '<span style="color:#999999;\">N/A</span>'
 results['Picard CollectInsertSizeMetrics'] = '<span style="color:#999999;\">N/A</span>'
 results['Picard CollectGcBiasMetrics'] = '<span style="color:#999999;\">N/A</span>'
+results['bcftools'] = '<span style="color:#999999;\">N/A</span>'
 
 # Search each file using its regex
 for k, v in regexes.items():
@@ -74,6 +74,7 @@ for k, v in regexes.items():
 for k in list(results):
     if not results[k]:
         del(results[k])
+
 
 # Dump to YAML
 print ('''

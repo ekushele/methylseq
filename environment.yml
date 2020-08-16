@@ -12,6 +12,10 @@ dependencies:
   - conda-forge::pymdown-extensions=6.0
   - conda-forge::pygments=2.6.1
   - conda-forge::pigz=2.3.4
+<<<<<<< HEAD
+=======
+  - conda-forge::r-markdown=1.1
+>>>>>>> Current main.nf is main_from_original_main_with_changes_epiread.nf, creating epiread original format, still without epiread paired-end merging
   - bioconda::fastqc=0.11.9
   # Default bismark pipeline
   - bioconda::trim-galore=0.6.5
@@ -30,5 +34,5 @@ dependencies:
 # added
   - bioconda::samblaster=0.1.24
   - bioconda::bedtools=2.29.1
-#  - bioconda::biscuit=0.3.15
-  - bioconda::biscuit=0.3.15.20200318
+  - bioconda::biscuit=0.3.15
+  - bioconda::bcftools=1.10.2
