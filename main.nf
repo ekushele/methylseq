@@ -50,10 +50,13 @@ def helpMessage() {
 	 --bismark_align_cpu_per_multicore [int] Specify how many CPUs are required per --multicore for bismark align (default = 3)
 	 --bismark_align_mem_per_multicore [str] Specify how much memory is required per --multicore for bismark align (default = 13.GB)
 	 --soloWCGW_file [path]             soloWCGW file, to intersect with methyl_extract bed file. soloWCGW for hg38 can be downlaod from: www.cse.huji.ac.il/~ekushele/solo_WCGW_cpg_hg38.bed. EXPERMINTAL!
-	 --whitelist						The complement of blacklist, needed for SNP extraction.. For more instuctions: https://www.cse.huji.ac.il/~ekushele/assets.html#whitelist
-	 --common_dbsnp						Common dbSNP for the relevant genome, for SNP filteration
-	 --assets_dir [path]                Assets directory for biscuit_QC, REQUIRED IF IN BISCUIT ALIGNER. can be found at: https://www.cse.huji.ac.il/~ekushele/assets.html
-	 --epiread [bool]                	Convert bam to biscuit epiread format
+	--assets_dir [path]                Assets directory for biscuit_QC, REQUIRED IF IN BISCUIT ALIGNER. can be found at: https://www.cse.huji.ac.il/~ekushele/assets.html
+	 --epiread [bool]                   Convert bam to biscuit epiread format
+	 --whitelist [file]				The complement of blacklist, needed for SNP extraction For more instuctions: https://www.cse.huji.ac.il/~ekushele/assets.html#whitelist
+	 --common_dbsnp	[file]				Common dbSNP for the relevant genome, for SNP filteration
+	 --cpg_file [file]                  Path to CpG file for the relevant genome (0-besed coordinates, not compressed)
+	 --debug_epiread                    Debug epiread merging for paired end-keep original epiread file and merged epiread file in debug mode
+	 --debug_epiread_merging            Debug epiread merging. Output merged epiread in debug mode
 
 	References                          If not specified in the configuration file or you wish to overwrite any of the references.
 	  --fasta [file]                    Path to fasta reference
@@ -112,13 +115,8 @@ params.bismark_index = params.genome ? params.genomes[ params.genome ].bismark ?
 params.bwa_meth_index = params.genome ? params.genomes[ params.genome ].bwa_meth ?: false : false
 params.fasta = params.genome ? params.genomes[ params.genome ].fasta ?: false : false
 params.fasta_index = params.genome ? params.genomes[ params.genome ].fasta_index ?: false : false
-params.bwa_biscuit_index =  false 
-params.soloWCGW_file =  false
-params.whitelist = false
-params.common_dbsnp = false
-params.save_pileup_file = false
-params.save_snp_file = false
-params.epiread = false
+
+
 assembly_name = (params.fasta.toString().lastIndexOf('/') == -1) ?: params.fasta.toString().substring( params.fasta.toString().lastIndexOf('/')+1)
 
 // Check if genome exists in the config file
@@ -282,21 +280,63 @@ if (params.readPaths) {
 
 if (params.soloWCGW_file) {
 	Channel
-	.fromPath(params.soloWCGW_file)
-	 .set { ch_soloWCGW_for_biscuitVCF; }
+	.fromPath(params.soloWCGW_file, checkIfExists: true)
+	.ifEmpty { exit 1, "Cannot find any soloWCGW_file file matching: ${params.soloWCGW_file}\n" }
+	.set { ch_soloWCGW_for_biscuitVCF; }
+}
+if (params.epiread) {
+	if (params.whitelist) {
+		Channel
+		.fromPath(params.whitelist, checkIfExists: true)
+		.ifEmpty { exit 1, "Cannot find any whitelist file matching: ${params.whitelist}\nWhitelist file is mandatory if epiread file conversion is required" }
+		.into { ch_whitelist_for_SNP; ch_whitelist_for_epiread}
+	}
+
+	if (params.common_dbsnp) {
+		Channel
+		.fromPath(params.common_dbsnp,  checkIfExists: true)
+		.ifEmpty { exit 1, "Cannot find any dbSNP file matching: ${params.common_dbsnp}\n" }
+		.set { ch_commonSNP_for_SNP; }
+	}
+	if (!params.single_end)
+		assert params.cpg_file: "No CpG file specified"
+
+	ch_cpg_for_epiread= Channel.empty()
+	if (!params.single_end) {
+			if (params.cpg_file) {
+				Channel
+					.fromPath(params.cpg_file, checkIfExists: true)
+					.ifEmpty { exit 1, "CpG file not found : ${params.cpg_file}" }
+					.into { ch_cpg_for_epiread; ch_cpg_file_for_cpg_index; }
+				}
+	}
+
+	// if( params.cpg_file_index ){
+		// Channel
+			// .fromPath(params.cpg_file_index, checkIfExists: true)
+			// .ifEmpty { exit 1, "CpG file not found : ${params.cpg_file_index}" }
+			// .set { ch_cpg_index_for_epiread }
+		// ch_cpg_file_for_cpg_index.close()
+	// }
+	// else
+	// {
+		// process make_cpg_file_index {
+			// input:
+			// file(cpg_file) from ch_cpg_file_for_cpg_index
+
+			// output:
+
+			// file("${cpg_file}.tbi") into ch_cpg_index_for_epiread
+
+			// script:
+
+			// """
+			// tabix $cpg_file
+			// """
+		// }
+	// }
 }
 
-if (params.whitelist) {
-	Channel
-	.fromPath(params.whitelist)
-	 .into { ch_whitelist_for_SNP; ch_whitelist_for_epiread}
-}
-
-if (params.common_dbsnp) {
-	Channel
-	.fromPath(params.common_dbsnp)
-	 .set { ch_commonSNP_for_SNP; }
-}
 // Header log info
 log.info nfcoreHeader()
 def summary = [:]
@@ -338,12 +378,17 @@ if(params.save_align_intermeds) save_intermeds.add('Intermediate BAM files')
 if(params.save_pileup_file)  save_intermeds.add('Pileup files') 
 if(params.save_snp_file)     save_intermeds.add('SNP bed-files') 
 if(save_intermeds.size() > 0) summary['Save Intermediates'] = save_intermeds.join(', ')
+debug_mode = [];
+if(params.debug_epiread)	debug_mode.add('Debug epiread step')
+if(params.debug_epiread_merging) debug_mode.add('Debug epiread merging')
+if(debug_mode.size() > 0) summary['Debug mode'] = debug_mode.join(', ')
 if(params.bismark_align_cpu_per_multicore) summary['Bismark align CPUs per --multicore'] = params.bismark_align_cpu_per_multicore
 if(params.bismark_align_mem_per_multicore) summary['Bismark align memory per --multicore'] = params.bismark_align_mem_per_multicore
 if(params.assets_dir)        summary['Assets Directory'] = params.assets_dir	
 if(params.soloWCGW_file)     summary['soloWCGW File'] = params.soloWCGW_file
 if(params.whitelist)         summary['Whitelist'] = params.whitelist
 if(params.common_dbsnp)      summary['Common SNP'] = params.common_dbsnp
+if(params.cpg_file)			 summary['CpG File'] = params.cpg_file
 if(params.epiread)           summary['Epiread'] = 'Yes'
 summary['Output dir']        = params.outdir
 summary['Launch dir']        = workflow.launchDir
@@ -1260,54 +1305,60 @@ if( params.aligner == 'biscuit' ){
 	if (params.epiread) {
 		if (params.common_dbsnp) {
 			process reformat_SNP {
-	
-			input:
-			file commonSNP_file from ch_commonSNP_for_SNP.collect()
-			
-			output:
-			file("reformattedSNP.snv.txt.gz*" ) into ch_reformattedSNP_for_SNP
-				 
-			script:
-			"""
-			less $commonSNP_file | $baseDir/bin/processUcscDbsnp.pl | grep snv | bgzip > reformattedSNP.snv.txt.gz
-			tabix -s 1 -b 2 -e 3 reformattedSNP.snv.txt.gz
-			"""
+
+				input:
+				file commonSNP_file from ch_commonSNP_for_SNP.collect()
+				
+				output:
+				file("reformattedSNP.snv.txt.gz*" ) into ch_reformattedSNP_for_SNP
+					 
+				script:
+				"""
+				less $commonSNP_file | $baseDir/bin/processUcscDbsnp.pl | grep snv | bgzip > reformattedSNP.snv.txt.gz
+				tabix -s 1 -b 2 -e 3 reformattedSNP.snv.txt.gz
+				"""
 			}
 		}
+		else {
+			ch_reformattedSNP_for_SNP = Channel.empty() 
+
+		}
+
+		
 		 
 		/***************************
 		 THE PROCESS IS IN PROGRESS!
 		****************************/
-		process get_SNP_file { 
-			tag "$name"
-			publishDir "${params.outdir}/epireads/snp", mode: 'copy',
-			saveAs: {filename ->
-				if( filename.indexOf("bed") > 0 && params.save_snp_file && filename != "where_are_my_files.txt") filename
-				else null
-			}
-			 
-			input:
-			set val(name), file(vcf) from ch_vcf_for_epiread
-			file whitelist_file from ch_whitelist_for_SNP.collect()
-			file reformatted_SNP from ch_reformattedSNP_for_SNP.ifEmpty([])
+			process get_SNP_file { 
+				tag "$name"
+				publishDir "${params.outdir}/epireads/snp", mode: 'copy',
+				saveAs: {filename ->
+					if( filename.indexOf("bed") > 0 && params.save_snp_file && filename != "where_are_my_files.txt") filename
+					else null
+				}
+				 
+				input:
+				set val(name), file(vcf) from ch_vcf_for_epiread
+				file whitelist_file from ch_whitelist_for_SNP.collect()
+				file reformatted_SNP from ch_reformattedSNP_for_SNP.collect().ifEmpty([])
 
-			output:
-			set val(name), file ("${name}.snp.bed") into ch_snp_for_epiread
-		  		 // biscuit vcf2bed -t snp "${vcf[0]}" > "${name}.snp.bed"
-			file "*gz"
-		  
-			script:
-			whitelist = params.whitelist  ? "-R $whitelist_file" : ''
-			snp_file = (reformatted_SNP.size()>0) ? "-a ${reformatted_SNP[0]}"  : '' 
-			"""
-			bcftools annotate $whitelist -O z ${snp_file} -h $baseDir/assets/common_dbsnp.hdr -c CHROM,FROM,TO,TYPE,COMMON_SOME,COMMON_ALL,REF_MIN,ALT_MIN,REF_DBSNP,ALT_DBSNP,REF_ALL,ALT_ALL,RSID,MAX_MAF "${vcf[0]}" > "${name}-whitelist-dbSNP.vcf.gz"
-			tabix  -p vcf "${name}-whitelist-dbSNP.vcf.gz"
-			bcftools view -O z -i'ALT!="N" & ALT!="." & ( (COUNT(GT=="0/1")>=1 & COMMON_ALL==1 & MAX_MAF>=0.05) | (COUNT(GT=="0/1" & GQ>=60)>=1) )' "${name}-whitelist-dbSNP.vcf.gz" > "${name}-whitelist-dbSNP-HET60.vcf.gz"
-			tabix -p vcf "${name}-whitelist-dbSNP-HET60.vcf.gz"		
-			bcftools query -u -i'GT="0/1" & GQ>=10' --format '%CHROM\t%POS\t%POS\t%REF\t%ALT[\t%GT\t%GQ\t%SP\t%AC\t%AF1]\t%RSID\t%COMMON_ALL\t%MAX_MAF\t%REF_MIN\t%ALT_MIN\n' "${name}-whitelist-dbSNP-HET60.vcf.gz" | awk -v OFS="\t" '{\$2 = \$2 - 1; print}' > "${name}.snp.bed"		
-			"""
-		}
-		
+				output:
+				set val(name), file ("${name}.snp.bed") into ch_snp_for_epiread
+					 // biscuit vcf2bed -t snp "${vcf[0]}" > "${name}.snp.bed"
+				file "*gz"
+			  
+				script:
+				whitelist = params.whitelist  ? "-R $whitelist_file" : ''
+				snp_file = (reformatted_SNP.size()>0) ? "-a ${reformatted_SNP[0]}"  : '' 
+				"""
+				bcftools annotate $whitelist -O z ${snp_file} -h $baseDir/assets/common_dbsnp.hdr -c CHROM,FROM,TO,TYPE,COMMON_SOME,COMMON_ALL,REF_MIN,ALT_MIN,REF_DBSNP,ALT_DBSNP,REF_ALL,ALT_ALL,RSID,MAX_MAF "${vcf[0]}" > "${name}-whitelist-dbSNP.vcf.gz"
+				tabix  -p vcf "${name}-whitelist-dbSNP.vcf.gz"
+				bcftools view -O z -i'ALT!="N" & ALT!="." & ( (COUNT(GT=="0/1")>=1 & COMMON_ALL==1 & MAX_MAF>=0.05) | (COUNT(GT=="0/1" & GQ>=60)>=1) )' "${name}-whitelist-dbSNP.vcf.gz" > "${name}-whitelist-dbSNP-HET60.vcf.gz"
+				tabix -p vcf "${name}-whitelist-dbSNP-HET60.vcf.gz"		
+				bcftools query -u -i'GT="0/1" & GQ>=10' --format '%CHROM\t%POS\t%POS\t%REF\t%ALT[\t%GT\t%GQ\t%SP\t%AC\t%AF1]\t%RSID\t%COMMON_ALL\t%MAX_MAF\t%REF_MIN\t%ALT_MIN\n' "${name}-whitelist-dbSNP-HET60.vcf.gz" | awk -v OFS="\t" '{\$2 = \$2 - 1; print}' > "${name}.snp.bed"	 	
+				"""
+			}
+
 		process epiread_convertion {
 			tag "$name"
 			publishDir "${params.outdir}/epireads", mode: 'copy'
@@ -1319,34 +1370,54 @@ if( params.aligner == 'biscuit' ){
 			file (snp),
 			file(fasta),
 			file(fasta_index),
-			file(whitelist) from ch_bam_sorted_for_epiread
+			file(whitelist)   from ch_bam_sorted_for_epiread 
+			//file(cpg)   from ch_bam_sorted_for_epiread 
 			.join(ch_bam_index_for_epiread)
 			.join(ch_snp_for_epiread)
 			.combine(ch_fasta_for_epiread)
 			.combine(ch_fasta_index_for_epiread)
 			.combine(ch_whitelist_for_epiread)
-			
-//| awk 'BEGIN{qname="";rec=""} qname==\$2{print rec"\t"\$5"\t"\$6"\t"\$7"\t"\$8;qname=""} qname!=\$2{qname=\$2;rec=\$1"\t"\$4"\t"\$5"\t"\$6"\t"\$7"\t"\$8;pair=\$3}' | sort -k1,1Vf -k3,3n --parallel=${task.cpus} -T .  | bgzip> ${name}.epiread.gz
-//				tabix -0 -s 1 -b 3 -e 3   ${name}.epiread.gz 
-			// /cs/icore/ekushele/script/cpp/epiread_pairedEnd_convertion /cs/icore/ireneguberm/WGBS/Pancreatic/hg19.CpG.bed.gz | sort -k1,1Vf -k5,5n --parallel=1 -T $work_dir | //bgzip> $epiread_file && tabix -0 -s 1 -b 5 -e 5 $epiread_file
-			
+			//.combine(ch_cpg_for_epiread.ifEmpty([]))
+			file cpg from ch_cpg_for_epiread.collect().ifEmpty([])
+
 			output:
-			file "*epiread*"  
+			file "*${name}.e*.gz*"  
+			file "${name}.original.epiread.*" optional true
 
 			script:
 			snp_file = (snp.size()>0) ? "-B " + snp.toString() : ''
+			debug_merging_epiread = (params.debug_epiread_merging || params.debug_epiread) ? "debug" : ''
 			no_filter_reverse = params.rrbs ? "-p" : ''
 			if (params.single_end) {
 			"""
-				biscuit epiread -q ${task.cpus} $snp_file $no_filter_reverse $fasta $bam  |sort --parallel=${task.cpus} -T . -k1,1Vf -k5,5n | bgzip > ${name}.epiread.gz
+				bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam 
+				samtools index ${name}.bam
+				biscuit epiread -q ${task.cpus} $snp_file $no_filter_reverse $fasta ${name}.bam  |sort --parallel=${task.cpus} -T . -k1,1Vf -k5,5n | bgzip > ${name}.epiread.gz
 				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
 			"""
-			} else {
+			} else if (params.debug_epiread) {
 			"""
-			bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam 
-			samtools index ${name}.bam
-			biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n > ${name}.sorted.epiread
-				
+				bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam 
+				samtools index ${name}.bam
+				biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n > ${name}.original.epiread
+				less ${name}.original.epiread | $baseDir/bin/epiread_pairedEnd_convertion $cpg $snp ${name}.epiread $debug_merging_epiread >  ${name}.err
+				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz				
+				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.err | bgzip > ${name}.err.gz 
+				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.original.epiread | bgzip > ${name}.original.epiread.gz
+				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
+				tabix -0 -s 1 -b 5 -e 5 ${name}.original.epiread.gz
+				tabix -0 -s 1 -b 5 -e 5 ${name}.err.gz
+			"""
+			}
+			else {
+			"""
+				bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam 
+				samtools index ${name}.bam
+				biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n | $baseDir/bin/epiread_pairedEnd_convertion $cpg $snp  ${name}.epiread  $debug_merging_epiread > ${name}.err
+				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz 
+				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.err | bgzip > ${name}.err.gz  
+				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
+				tabix -0 -s 1 -b 5 -e 5 ${name}.err.gz
 			"""
 			}
 		}
