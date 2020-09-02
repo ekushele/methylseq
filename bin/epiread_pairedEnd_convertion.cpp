@@ -433,25 +433,23 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
 		l2[1] = ".";		
 	}		
 	//if l2 doesn't add any information to the read-length, sequence and SNP data:
-	if (l1[4] == l2[4] && l1[5] == l2[5] && l1[6] == l2[6] && l1[7] == l2[7]) { 
+	if (l1[4] == l2[4] && l1[5] == l2[5] && ( SNP_data && l1[6] == l2[6] && l1[7] == l2[7] )) { 
 		//there is an snp value on the identical lines
 		try {
-        if (l1[6] != "." )
-			l1[7]=GetFinalSNP(l1);
-		merged_epiread << vec2string(l1) <<endl;
-		}
+			if (l1[6] != "." )
+				l1[7]=GetFinalSNP(l1);
+				merged_epiread << vec2string(l1) <<endl;
+			}
 		catch (std::exception &e) {
-
-			
-//			cerr <<"Problem "<< vec2string(l1) << " " << e.what() <<endl;   
-//			cerr <<"Problem "<< vec2string(l2) <<" " << e.what() <<endl;
 			cout << vec2string(l1) << "\t" << GetFinalSNPWithoutChecking(l1) <<endl;   
 			cout << vec2string(l2) << "\t" << GetFinalSNPWithoutChecking(l2) <<endl;   
 
 		}
 		return;
 	}
-	
+
+	//cerr <<"IMbefore " << vec2string(l1) << " " <<SNP_data<<endl;;
+
 	
 	//swap lines if l1 first site comes before l2 first site (minus strand)
     if (stoi(l1[4]) > stoi(l2[4])) {
@@ -487,7 +485,6 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
 		
 	int last_site = max(first_cpg1 + pattern1_len, first_cpg2 + pattern2_len);
 	int overall_len = last_site-first_cpg1;
-	//cout<<first_cpg1<<" " <<pattern1_len<<" "<<first_cpg2<<" "<<pattern2_len<<" "<< overall_len<<endl;
 
 	string merged_pattern;  // output pattern
 
@@ -498,6 +495,7 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
     	cerr <<output_error<<endl;
     	return;
     }
+
 
     // init merged_pattern with missing values
     for (int i = 0; i < overall_len; i++)
@@ -517,15 +515,14 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
             merged_pattern[adj_i] = 'N';
         }
     } 
-	//l1[5] = merged_pattern;
+
 	vector<string> merged_snp;
 	try {
 		if (SNP_data) //SNP file is not empty 
 		{
-			 merged_snp = mergeSNP(l1,l2);
-			 l1[5] = merged_pattern; 
-
-			 l1[6] = merged_snp[0];
+			merged_snp = mergeSNP(l1,l2);
+			l1[5] = merged_pattern; 
+			l1[6] = merged_snp[0];
 			l1[7] = merged_snp[1]; 
 		}
 		merged_epiread << vec2string(l1) <<endl;  
