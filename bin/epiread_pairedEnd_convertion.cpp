@@ -11,7 +11,17 @@ using namespace std;
 
 string TAB = "\t";
 int MAX_PAT_LEN = 300;
-unordered_map<string, int> dictCpG;
+struct CpG_record
+{
+	
+	string next_cpg;
+	int index;
+	CpG_record(){}
+
+	CpG_record(string _next_cpg, int _index) :
+              next_cpg(_next_cpg), index(_index) {}
+};
+unordered_map<string, CpG_record> dictCpG;
 struct SNP_record
 {
 	char ref;
@@ -33,7 +43,7 @@ vector <string> line2tokens(string &line);
 //void convert_epiread(string genome_cpg);
 void convert_epiread(ofstream& merged_epiread);
 //int execute(string cmd, string& output);
-string vec2string(vector <string> &vec);
+string vec2string(vector <string> &vec, string coordinates = string());
 //void merge_paired_and_print(vector <string> l1, vector <string> l2, string &genome);
 void merge_paired_and_print(vector <string> l1, vector <string> l2,ofstream& merged_epiread);
 
@@ -102,29 +112,64 @@ void convert_epiread(ofstream& merged_epiread) {
 }
 
 
-string vec2string(vector <string> &vec) {
+string vec2string(vector <string> &vec, string coordinates) {
     /** print a epiread-like vector to stdout, tab separated */
     // vec length must be 8, or 6 if there is no SNP.
 	int num_of_column=8;
 	if (!SNP_data)
 		num_of_column=6;
-	string str_vec = vec[0];
-	for (int i=1; i<num_of_column; i++)
+	string str_vec = vec[0] + coordinates;
+	//for (int i=1; i<num_of_column; i++)
+	 for (int i=1; i<vec.size(); i++)
 		str_vec += TAB + vec[i];
 	return str_vec;
 }
 
 int CpGFirstIndex(string &locus) {
-    /** translate CpG index (in range 1,...,28M~) to dictionary */
+    /**Get the index of the first CpG according to its locus */
     int start_site = 0;
     auto search = dictCpG.find(locus);
     if (search != dictCpG.end()) {
-        start_site = search->second;
+        start_site = (search->second).index;
     } else {
         // This is an internal error - should never happen.
         throw logic_error("Internal Error. Unknown CpG locus: " + locus);
     }
     return start_site;
+    
+}
+
+// int CpGLastLoci(int &index) {
+	// //get the locus of the last CpG according to it's index
+    // string position = "";
+	// for (auto it = dictCpG.begin(); it != dictCpG.end(); ++it)
+		// if (it->second == index)
+			// return stoi((it->first).substr((it->first).find("\t")+1));
+   
+    // // This is an internal error - should never happen.
+    // throw logic_error("Internal Error. Unknown CpG index: " + index);
+
+// }
+
+int CpGLastLoci(string &chr,string &pos,int length_cpg) {
+	//get the locus of the last CpG according to window and length of string
+	string locus = chr + TAB + pos;
+    auto search = dictCpG.find(locus);
+	if (search != dictCpG.end()) {
+		for (int i=0;i<length_cpg - 1 ;i++) {
+			locus = chr + TAB + (search->second).next_cpg;
+			search = dictCpG.find(locus);
+			if (search == dictCpG.end()) 
+				   throw logic_error("Internal Error. Unknown CpG locus: " + locus);
+		}
+		return stoi((search->second).next_cpg);
+
+	}
+
+   
+    // This is an internal error - should never happen.
+    throw logic_error("Internal Error. Unknown CpG locus: " + locus);
+
 }
 
 SNP_record FindSNPRecord(string &locus) {
@@ -140,18 +185,44 @@ SNP_record FindSNPRecord(string &locus) {
     return variant;
 }
 
+// void initializeDictCpG(string cpg)
+// {
+
+	// int cpg_index=1; 
+    // vector <string> record;
+	// ifstream cpg_file(cpg, ios_base::in);
+	// string line; 
+	// while (getline(cpg_file, line)) {	
+		// record=line2tokens(line);		
+		// //dictCpG.insert(make_pair(record[0]+TAB+record[1]+TAB+record[2],cpg_index++));
+		// dictCpG.insert(make_pair(record[0]+TAB+record[1],cpg_index++));
+    // }
+// }
+
 void initializeDictCpG(string cpg)
 {
 
 	int cpg_index=1; 
-    vector <string> record;
+    vector <string> record, next_record;
 	ifstream cpg_file(cpg, ios_base::in);
 	string line; 
+	string next_cpg;
+	
+	//get first CpG
+	getline(cpg_file, line);
+	record = line2tokens(line);	
+	
 	while (getline(cpg_file, line)) {	
-		record=line2tokens(line);		
-		dictCpG.insert(make_pair(record[0]+TAB+record[1]+TAB+record[2],cpg_index++));
+		next_record = line2tokens(line);
+		next_cpg = next_record[1];
+		dictCpG.insert(make_pair(record[0]+TAB+record[1],CpG_record(next_cpg,cpg_index++)));
+		record = next_record;
     }
+	//last record-no "next cpg"
+	dictCpG.insert(make_pair(record[0]+TAB+record[1],CpG_record("",cpg_index++)));
+
 }
+
 
 void initializeDictSNP(string snp)
 {
@@ -230,12 +301,13 @@ SNP_record checkLocus(string &chr, string &pos, string &strand,char &variant)
 	//if SNP is not in the rule, but matches the ref or alt:
 	if (snp.ref == variant ||  snp.alt == variant || variant =='N' || variant == '.')
 		 return snp;
-	debug_data = "(Ref:" +convertChar2srting(snp.ref)+",Alt:"+convertChar2srting(snp.alt)+",SP:"+snp.sp+")"; 
+	debug_data = "(Ref-" +convertChar2srting(snp.ref)+",Alt-"+convertChar2srting(snp.alt)+",SP-"+snp.sp+")"; 
 
 	throw logic_error("SNP: " + convertChar2srting(variant) + debug_data);  
 	
 
 }
+
 string GetFinalSNP(vector <string> &line) 
 {  // get the final merged SNP 
 	string debug_data;
@@ -243,7 +315,7 @@ string GetFinalSNP(vector <string> &line)
 	string final_snp = "0:";
 	int snp_length = line[7].length();
 	SNP_record snp_rec = checkLocus(line[0],line[6],line[3],cuttent_snp[0]);
-	debug_data = "(Ref:" +convertChar2srting(snp_rec.ref)+",Alt:"+convertChar2srting(snp_rec.alt)+",SP:"+snp_rec.sp+")";
+	debug_data = "(Ref-" +convertChar2srting(snp_rec.ref)+",Alt-"+convertChar2srting(snp_rec.alt)+",SP-"+snp_rec.sp+")";
 	final_snp += convertChar2srting(cuttent_snp[0]);
 	if (DEBUG) {
 		final_snp += debug_data;
@@ -256,7 +328,7 @@ string GetFinalSNP(vector <string> &line)
 	for (int i=1; i<snp_length; i++) { 
 		SNP_record snp_rec = checkLocus(line[0],next_pos,line[3],cuttent_snp[i]);
 		final_snp += ":" + to_string(stoi(next_pos) - stoi(absolute_pos)) + ":" + convertChar2srting(cuttent_snp[i]);
-		debug_data = "(Ref:" +convertChar2srting(snp_rec.ref)+",Alt:"+convertChar2srting(snp_rec.alt)+",SP:"+snp_rec.sp+")";
+		debug_data = "(Ref-" +convertChar2srting(snp_rec.ref)+",Alt-"+convertChar2srting(snp_rec.alt)+",SP-"+snp_rec.sp+")";
 		if (DEBUG) 
 			final_snp += debug_data;
 		next_pos = snp_rec.next_snp;
@@ -276,7 +348,7 @@ string GetFinalSNPWithoutChecking(vector <string> &line)
 	int snp_length = line[7].length();
 	string locus = line[0] + TAB + line[6];
 	SNP_record snp_rec = FindSNPRecord(locus);
-	debug_data = "(Ref:" +convertChar2srting(snp_rec.ref)+",Alt:"+convertChar2srting(snp_rec.alt)+",SP:"+snp_rec.sp+")";
+	debug_data = "(Ref-" +convertChar2srting(snp_rec.ref)+",Alt-"+convertChar2srting(snp_rec.alt)+",SP-"+snp_rec.sp+")";
 	final_snp += convertChar2srting(cuttent_snp[0]);
 	if (DEBUG) {
 		final_snp += debug_data;
@@ -290,7 +362,7 @@ string GetFinalSNPWithoutChecking(vector <string> &line)
 		locus = line[0] + TAB + next_pos;
 		snp_rec = FindSNPRecord(locus);		
 		final_snp += ":" + to_string(stoi(next_pos) - stoi(absolute_pos)) + ":" + convertChar2srting(cuttent_snp[i]);
-		debug_data = "(Ref:" +convertChar2srting(snp_rec.ref)+",Alt:"+convertChar2srting(snp_rec.alt)+",SP:"+snp_rec.sp+")";
+		debug_data = "(Ref-" +convertChar2srting(snp_rec.ref)+",Alt-"+convertChar2srting(snp_rec.alt)+",SP-"+snp_rec.sp+")";
 		if (DEBUG) 
 			final_snp += debug_data;
 		next_pos = snp_rec.next_snp;
@@ -423,6 +495,33 @@ vector<string> mergeSNP(vector<string> l1, vector<string> l2)
 	
 }	
 	
+string add_coordintes (vector<string> &l1)
+{//add first and last coordinates in case where there is SNP data
+	int last_snp = 0; // works even if there's no SNP data
+	string coordinates = "";
+	if (SNP_data && l1[7] != ".") //if there's SNP data 
+	{ 	//get last index of SNP
+		string str_tmp = l1[7].substr(0,l1[7].rfind(":"));
+		str_tmp = str_tmp.substr(str_tmp.rfind(":")+1);
+		int last_snp = stoi(l1[6])+stoi(str_tmp);
+	}
+
+	//get last index of CpG
+	//string window = l1[0] + "\t" + l1[4];
+	//int index = CpGFirstIndex(window) + l1[5].length() - 1;
+	int last_CpG = CpGLastLoci(l1[0],l1[4], l1[5].length() - 1);
+	
+	//insert values to vector and print
+	if (SNP_data  && l1[6] != ".")
+		//l1.insert(l1.begin()+1, to_string(min(stoi(l1[4]),stoi(l1[6]))));
+		coordinates += TAB+ to_string(min(stoi(l1[4]),stoi(l1[6])));
+	else // no SNP data, coordinates depends only on first CpG
+		//l1.insert(l1.begin()+1, l1[4]);
+		coordinates += TAB+ l1[4] ;
+	//l1.insert(l1.begin()+2, to_string(max(last_snp,last_CpG)));
+	coordinates += TAB+  to_string(max(last_snp,last_CpG));
+	return coordinates;
+}
  
 //void merge_paired_and_print(vector <string> l1, vector <string> l2, string &genome) {
 void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& merged_epiread) {
@@ -431,18 +530,29 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
 	if (!DEBUG) {
 		l1[1] = ".";  
 		l2[1] = ".";		
-	}		
+	}	
+	
+	
+	bool flag_SNP_identical = (SNP_data) ? l1[6] == l2[6] && l1[7] == l2[7] : true;
 	//if l2 doesn't add any information to the read-length, sequence and SNP data:
-	if (l1[4] == l2[4] && l1[5] == l2[5] && ( SNP_data && l1[6] == l2[6] && l1[7] == l2[7] )) { 
+	if (l1[4] == l2[4] && l1[5] == l2[5] && ( flag_SNP_identical )) { 
 		//there is an snp value on the identical lines
 		try {
-			if (l1[6] != "." )
-				l1[7]=GetFinalSNP(l1);
-				merged_epiread << vec2string(l1) <<endl;
+				if ( SNP_data && l1[6] != "." )
+					l1[7] = GetFinalSNP(l1);
+
+				//add_coordintes(l1);
+				string coordinates = add_coordintes(l1);
+				merged_epiread << vec2string(l1,coordinates) <<endl;
 			}
 		catch (std::exception &e) {
-			cout << vec2string(l1) << "\t" << GetFinalSNPWithoutChecking(l1) <<endl;   
-			cout << vec2string(l2) << "\t" << GetFinalSNPWithoutChecking(l2) <<endl;   
+			if (SNP_data) {
+				cout << vec2string(l1) << "\t" << GetFinalSNPWithoutChecking(l1) <<endl;   
+				cout << vec2string(l2) << "\t" << GetFinalSNPWithoutChecking(l2) <<endl;   
+			}
+			else {
+				cout << vec2string(l1) << endl;
+			}   cout << vec2string(l2) << endl;
 
 		}
 		return;
@@ -465,12 +575,14 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
 	int pattern2_len = pattern2.length();	
 	
 	//0-based file
-	int first_cpg_site1 = stoi(l1[4]);
-	int first_cpg_site2 = stoi(l2[4]);
+	//int first_cpg_site1 = stoi(l1[4]);
+	//int first_cpg_site2 = stoi(l2[4]);
 	
 	string window1,window2;
-	window1 = l1[0] + "\t" + to_string(first_cpg_site1) + "\t" + to_string(first_cpg_site1+1);
-	window2 = l2[0] + "\t" + to_string(first_cpg_site2) + "\t" + to_string(first_cpg_site2+1);
+	//window1 = l1[0] + "\t" + to_string(first_cpg_site1) + "\t" + to_string(first_cpg_site1+1);
+	//window2 = l2[0] + "\t" + to_string(first_cpg_site2) + "\t" + to_string(first_cpg_site2+1);
+	window1 = l1[0] + "\t" + l1[4];
+	window2 = l2[0] + "\t" + l2[4]; 
 	int first_cpg1,first_cpg2;
 	try {
 		first_cpg1 = CpGFirstIndex(window1);
@@ -524,8 +636,11 @@ void merge_paired_and_print(vector <string> l1, vector <string> l2, ofstream& me
 			l1[5] = merged_pattern; 
 			l1[6] = merged_snp[0];
 			l1[7] = merged_snp[1]; 
+			
 		}
-		merged_epiread << vec2string(l1) <<endl;  
+		//add_coordintes(l1);
+		merged_epiread << vec2string(l1,add_coordintes(l1)) <<endl;  
+		
     }
     catch (std::exception &e) {
 			cout << vec2string(l1) << "\t" << GetFinalSNPWithoutChecking(l1) <<endl;   
@@ -540,7 +655,11 @@ int main(int argc, char **argv) {
 
     try {
 		if (!(argc ==4 || argc ==5))
-			throw invalid_argument("Usage: epiread_pairedEnd  GENOME_CPG_FILE(0-based)  SNP_FILE output_file [DEBUG]");
+			throw invalid_argument("Usage: epiread_pairedEnd  GENOME_CPG_FILE(0-based, not comressed)  SNP_FILE output_file [DEBUG]");
+
+		string cpg_file = argv[1];
+		if (0 == cpg_file.compare (cpg_file.length() - 2, 2, "gz"))
+			throw  invalid_argument("GENOME_CPG_FILE must be not compressed");
 
         if (argc == 5) 
 			DEBUG =true;

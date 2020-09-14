@@ -182,8 +182,8 @@ else if( params.aligner == 'bwameth' || params.aligner == 'biscuit'){
 	}
   }
 
-if( params.aligner == 'biscuit' ) {
-	assert params.assets_dir : "Assets directory for biscuit-QC was not specified!"
+if( params.aligner == 'biscuit' && params.assets_dir ) {
+	//assert params.assets_dir : "Assets directory for biscuit-QC was not specified!"
 
 	Channel
 		.fromPath("${params.assets_dir}", checkIfExists: true)
@@ -1383,6 +1383,7 @@ if( params.aligner == 'biscuit' ){
 			output:
 			file "*${name}.e*.gz*"  
 			file "${name}.original.epiread.*" optional true
+//				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
 
 			script:
 			snp_file = (snp.size()>0) ? "-B " + snp.toString() : ''
@@ -1401,11 +1402,11 @@ if( params.aligner == 'biscuit' ){
 				samtools index ${name}.bam
 				biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n > ${name}.original.epiread
 				less ${name}.original.epiread | $baseDir/bin/epiread_pairedEnd_convertion $cpg $snp ${name}.epiread $debug_merging_epiread >  ${name}.err
-				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz				
+				sort -k1,1Vf -k 2,2n -k 3,3n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz				
 				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.err | bgzip > ${name}.err.gz 
 				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.original.epiread | bgzip > ${name}.original.epiread.gz
-				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
 				tabix -0 -s 1 -b 5 -e 5 ${name}.original.epiread.gz
+				tabix -0 -p bed ${name}.epiread.gz
 				tabix -0 -s 1 -b 5 -e 5 ${name}.err.gz
 			"""
 			}
@@ -1414,16 +1415,16 @@ if( params.aligner == 'biscuit' ){
 				bedtools intersect -abam $bam -b $whitelist -ubam -f 1.0 | samtools view  -Sb - > ${name}.bam 
 				samtools index ${name}.bam
 				biscuit epiread -q ${task.cpus} $snp_file $fasta  ${name}.bam | sort --parallel=${task.cpus} -T .  -k2,2 -k1,1 -k4,4 -k3,3n | $baseDir/bin/epiread_pairedEnd_convertion $cpg $snp  ${name}.epiread  $debug_merging_epiread > ${name}.err
-				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz 
+				sort -k1,1Vf  -k 2,2n -k 3,3n --parallel=${task.cpus} -T . ${name}.epiread | bgzip > ${name}.epiread.gz 
 				sort -k1,1Vf -k5,5n --parallel=${task.cpus} -T . ${name}.err | bgzip > ${name}.err.gz  
-				tabix -0 -s 1 -b 5 -e 5 ${name}.epiread.gz
+				tabix -0 -p bed ${name}.epiread.gz 
 				tabix -0 -s 1 -b 5 -e 5 ${name}.err.gz
 			"""
 			}
 		}
 	}
 
-
+ if (params.assets_dir) {
 	process biscuit_QC {
 		tag "$name"
 		publishDir "${params.outdir}/biscuit_QC", mode: 'copy'
@@ -1450,6 +1451,11 @@ if( params.aligner == 'biscuit' ){
 		$baseDir/bin/biscuit_QC.sh -v ${vcf[0]} -o ${name}.${assembly}_biscuitQC $assets $fasta ${name}.${assembly} ${bam} 				
 		"""
 	}
+ } 
+ else {
+			ch_QC_results_for_multiqc = Channel.empty() 
+
+		}
 
 } // end of biscuit if block
 else {
