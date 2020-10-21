@@ -153,6 +153,7 @@ int CpGFirstIndex(string &locus) {
 
 int CpGLastLoci(string &chr,string &pos,int length_cpg) {
 	//get the locus of the last CpG according to window and length of string
+	if (length_cpg==0) return stoi(pos);
 	string locus = chr + TAB + pos;
     auto search = dictCpG.find(locus);
 	if (search != dictCpG.end()) {
@@ -510,7 +511,7 @@ string add_coordintes (vector<string> &l1)
 	//string window = l1[0] + "\t" + l1[4];
 	//int index = CpGFirstIndex(window) + l1[5].length() - 1;
 	int last_CpG = CpGLastLoci(l1[0],l1[4], l1[5].length() - 1);
-	
+
 	//insert values to vector and print
 	if (SNP_data  && l1[6] != ".")
 		//l1.insert(l1.begin()+1, to_string(min(stoi(l1[4]),stoi(l1[6]))));

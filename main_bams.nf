@@ -23,6 +23,7 @@ def helpMessage() {
 	  --aligner [str]                   Alignment tool to use (default: bismark)
 											Available: bismark, bismark_hisat, bwameth, biscuit
 	  --reads [file]                    Path to input data (must be surrounded with quotes)
+	  --bams [file] 					Path to input bam files data, downstream analysis via biscuit aligner. Files must be sorted by coordinates, indexed and duplicate-marked. If this parameter is set, the '--reads' is ignored.
 	  -profile [str]                    Configuration profile to use. Can use multiple (comma separated)
 											Available: conda, docker, singularity, test, awsbatch, <institute> and more
 
@@ -115,8 +116,6 @@ params.bismark_index = params.genome ? params.genomes[ params.genome ].bismark ?
 params.bwa_meth_index = params.genome ? params.genomes[ params.genome ].bwa_meth ?: false : false
 params.fasta = params.genome ? params.genomes[ params.genome ].fasta ?: false : false
 params.fasta_index = params.genome ? params.genomes[ params.genome ].fasta_index ?: false : false
-
-
 assembly_name = (params.fasta.toString().lastIndexOf('/') == -1) ?: params.fasta.toString().substring( params.fasta.toString().lastIndexOf('/')+1)
 
 // Check if genome exists in the config file
@@ -130,9 +129,10 @@ Channel
 
 ch_splicesites_for_bismark_hisat_align = params.known_splices ? Channel.fromPath("${params.known_splices}", checkIfExists: true).collect() : file('null')
 
-if( params.aligner =~ /bismark/ ){
+
+if( params.aligner =~ /bismark/ && !params.bams ){
 	assert params.bismark_index || params.fasta : "No reference genome index or fasta file specified"
-	ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bismark_align; ch_wherearemyfiles_for_bismark_samtools_sort; ch_wherearemyfiles_for_bismark_dedup_samtools_sort }
+	ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bismark_align; ch_wherearemyfiles_for_bismark_samtools_sort; ch_wherearemyfiles_for_bismark_dedup_samtools_sort; }
 
 	Channel
 		.fromPath(params.fasta, checkIfExists: true)
@@ -148,7 +148,7 @@ if( params.aligner =~ /bismark/ ){
 	}
 	   
 }
-else if( params.aligner == 'bwameth' || params.aligner == 'biscuit'){ 
+else if( params.aligner == 'bwameth' || params.aligner == 'biscuit' || params.bams){ 
 	assert params.fasta : "No Fasta reference specified!"
 	ch_wherearemyfiles_for_alignment.into { ch_wherearemyfiles_for_bwamem_align; ch_wherearemyfiles_for_biscuit_align; ch_wherearemyfiles_for_samtools_sort_index_flagstat; ch_wherearemyfiles_for_samblaster }
 
@@ -182,7 +182,7 @@ else if( params.aligner == 'bwameth' || params.aligner == 'biscuit'){
 	}
   }
 
-if( params.aligner == 'biscuit' && params.assets_dir ) {
+if( ( params.aligner == 'biscuit' || params.bams) && params.assets_dir ) {
 	//assert params.assets_dir : "Assets directory for biscuit-QC was not specified!"
 
 	Channel
@@ -257,6 +257,7 @@ ch_output_docs = file("$baseDir/docs/output.md", checkIfExists: true)
 /*
  * Create a channel for input read files
  */
+assert params.readPaths || params.reads || params.bams : "Either reads or bams files must be specified!"
 if (params.readPaths) {
 	if (params.single_end) {
 		Channel
@@ -271,11 +272,14 @@ if (params.readPaths) {
 			.ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
 			.into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
 	}
-} else {
+} else if (params.reads) {	
 	Channel
 		.fromFilePairs( params.reads, size: params.single_end ? 1 : 2 )
 		.ifEmpty { exit 1, "Cannot find any reads matching: ${params.reads}\nNB: Path needs to be enclosed in quotes!\nIf this is single-end data, please specify --single_end on the command line." }
 		.into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
+} else {
+	ch_read_files_for_fastqc = Channel.empty() 
+	ch_read_files_for_trim_galore = Channel.empty() 
 }
 
 if (params.soloWCGW_file) {
@@ -310,40 +314,16 @@ if (params.epiread) {
 					.into { ch_cpg_for_epiread; ch_cpg_file_for_cpg_index; }
 				}
 	}
-
-	// if( params.cpg_file_index ){
-		// Channel
-			// .fromPath(params.cpg_file_index, checkIfExists: true)
-			// .ifEmpty { exit 1, "CpG file not found : ${params.cpg_file_index}" }
-			// .set { ch_cpg_index_for_epiread }
-		// ch_cpg_file_for_cpg_index.close()
-	// }
-	// else
-	// {
-		// process make_cpg_file_index {
-			// input:
-			// file(cpg_file) from ch_cpg_file_for_cpg_index
-
-			// output:
-
-			// file("${cpg_file}.tbi") into ch_cpg_index_for_epiread
-
-			// script:
-
-			// """
-			// tabix $cpg_file
-			// """
-		// }
-	// }
 }
 
 // Header log info
 log.info nfcoreHeader()
 def summary = [:]
 summary['Run Name']  = custom_runName ?: workflow.runName
-summary['Reads']     = params.reads
+if (!params.bams) summary['Reads']     = params.reads
+if (params.bams) summary['Bams']	= params.bams
 summary['Aligner']   = params.aligner
-summary['Data Type'] = params.single_end ? 'Single-End' : 'Paired-End'
+if (!params.bams) summary['Data Type'] = params.single_end ? 'Single-End' : 'Paired-End'
 if(params.known_splices)     summary['Spliced alignment'] =  'Yes'
 if(params.slamseq)           summary['SLAM-seq'] = 'Yes'
 if(params.local_alignment)   summary['Local alignment'] = 'Yes'
@@ -480,7 +460,7 @@ process get_software_versions {
 /*
  * PREPROCESSING - Build Bismark index
  */
-if( !params.bismark_index && params.aligner =~ /bismark/ ){
+if( !params.bismark_index && params.aligner =~ /bismark/ && !params.bams ){
 	process makeBismarkIndex {
 		publishDir path: { params.save_reference ? "${params.outdir}/reference_genome" : params.outdir },
 				   saveAs: { params.save_reference ? it : null }, mode: 'copy'
@@ -505,7 +485,7 @@ if( !params.bismark_index && params.aligner =~ /bismark/ ){
 /*
  * PREPROCESSING - Build bwa-mem index
  */
-if( !params.bwa_meth_index && params.aligner == 'bwameth' ){
+if( !params.bwa_meth_index && params.aligner == 'bwameth' && !params.bams ){
 	process makeBwaMemIndex {
 		tag "$fasta"
 		publishDir path: "${params.outdir}/reference_genome", saveAs: { params.save_reference ? it : null }, mode: 'copy'
@@ -526,7 +506,7 @@ if( !params.bwa_meth_index && params.aligner == 'bwameth' ){
 /*
  * PREPROCESSING - Build bwa index, using biscuit
  */
-if(!params.bwa_biscuit_index && params.aligner == 'biscuit' ){
+if( !params.bwa_biscuit_index && params.aligner == 'biscuit' && !params.bams ){
 	process makeBwaBISCUITIndex {
 		tag "$fasta"
 		publishDir path: "${params.outdir}/reference_genome", saveAs: { params.save_reference ? it : null }, mode: 'copy'
@@ -586,6 +566,8 @@ process fastqc {
 	output:
 	file '*_fastqc.{zip,html}' into ch_fastqc_results_for_multiqc
 
+	when: params.reads && !params.bams
+	
 	script:
 	"""
 	fastqc --quiet --threads $task.cpus $reads
@@ -619,6 +601,8 @@ if( params.skip_trimming ){
 		file "*trimming_report.txt" into ch_trim_galore_results_for_multiqc
 		file "*_fastqc.{zip,html}"
 		file "where_are_my_files.txt"
+		
+		when: params.reads && !params.bams
 
 		script:
 		def c_r1 = clip_r1 > 0 ? "--clip_r1 $clip_r1" : ''
@@ -650,7 +634,7 @@ if( params.skip_trimming ){
 /*
  * STEP 3.1 - align with Bismark
  */
-if( params.aligner =~ /bismark/ ){
+if( params.aligner =~ /bismark/ && !params.bams ){
 	process bismark_align {
 		tag "$name"
 		publishDir "${params.outdir}/bismark_alignments", mode: 'copy',
@@ -962,7 +946,7 @@ else {
 /*
  * Process with bwa-mem and assorted tools
  */
-if( params.aligner == 'bwameth' ){
+if( params.aligner == 'bwameth' && !params.bams ){
 	process bwamem_align {
 		tag "$name"
 		publishDir "${params.outdir}/bwa-mem_alignments", mode: 'copy',
@@ -1118,7 +1102,54 @@ else {
 /*
  * Process with BISCUIT and assorted tools (samblaster)
  */
-if( params.aligner == 'biscuit' ){
+if( params.aligner == 'biscuit' || params.bams ){
+	if ( params.bams) {
+		Channel
+			.fromPath( params.bams )
+			.ifEmpty { exit 1, "Cannot find any bam files matching: ${params.bams}\nNB: Path needs to be enclosed in quotes!" }
+			.map { row -> [ row.simpleName, [ file(row, checkIfExists: true) ] ] }
+			.into { ch_bam_for_samtools_stats; ch_bam_dedup_for_qualimap; ch_bam_for_preseq;ch_bam_sorted_for_pileup; ch_bam_sorted_for_epiread; ch_bam_noDups_for_QC; ch_bam_sorted_for_picard }
+		
+		Channel 
+			.fromPath( params.bams +".bai" )
+			.map { row -> [ row.simpleName, [ file(row, checkIfExists: true) ] ] }
+			.ifEmpty { exit 1, "Cannot find any bai files (bam-index) matching: ${params.bams}.bai\nNB: Path needs to be enclosed in quotes!" }
+			.into { ch_bam_index_sorted_for_pileup; ch_bam_index_for_epiread; ch_bam_index_noDups_for_QC }
+		
+		process samtools_sort_index_flagstat_bams {
+			tag "$name"
+			publishDir "${params.outdir}", mode: 'copy',
+				saveAs: {filename ->
+					if(filename.indexOf("report.txt") > 0) "biscuit_alignments/logs/$filename"
+					else if (filename.indexOf("sorted.bam") > 0) "biscuit_alignments/$filename"
+					else if( (params.save_align_intermeds || params.skip_deduplication  || params.rrbs).any() && filename.indexOf("sorted.bam") > 0) "biscuit_alignments/$filename"
+					else if( (!params.save_align_intermeds && !params.rrbs).every() && filename == "where_are_my_files.txt") filename
+					else if( (params.save_align_intermeds || params.skip_deduplication  || params.rrbs).any() && filename != "where_are_my_files.txt") filename
+					else null
+				}
+
+			input:
+			set val(name), file(samblaster_bam) from ch_bam_for_samtools_stats
+			file wherearemyfiles from ch_wherearemyfiles_for_samtools_sort_index_flagstat.collect()
+
+			output:
+			file "${name}_flagstat_report.txt" into ch_flagstat_results_biscuit_for_multiqc
+			file "${name}_stats_report.txt" into ch_samtools_stats_results_biscuit_for_multiqc
+			file "where_are_my_files.txt"
+			
+			script:
+			def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
+			def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
+			"""
+			samtools flagstat ${samblaster_bam} > ${name}_flagstat_report.txt
+			samtools stats ${samblaster_bam} > ${name}_stats_report.txt
+			"""
+		}
+		ch_markDups_results_for_multiqc = Channel.from(false)
+		ch_samblaster_for_multiqc = Channel.from(false)
+}
+		
+	else {
 	process biscuit_align {
 		tag "$name"
 		publishDir "${params.outdir}/biscuit_alignments", mode: 'copy',
@@ -1137,7 +1168,7 @@ if( params.aligner == 'biscuit' ){
 		set val(name), file('*.bam') into ch_bam_for_markDuplicates //, ch_bam_for_samtools_sort_index_flagstat
 		file "where_are_my_files.txt"
 
-		 script:
+		script:
 		fasta = bwa_indices[0].toString() - '.bwameth' - '.c2t' - '.amb' - '.ann' - '.bwt' - '.pac' - '.sa' - '.fai'  - '.par' - '.dau' -'.bis'
 		assembly = fasta.replaceAll(/\.\w+/,"")
 		prefix = reads[0].toString() - ~/(_R1)?(_trimmed)?(_val_1)?(\.fq)?(\.fastq)?(\.gz)?(\.bz2)?$/
@@ -1172,6 +1203,7 @@ if( params.aligner == 'biscuit' ){
 			output:
 			set val(name), file("${bam.baseName}.samblaster.bam") into ch_samblaster_for_samtools_sort_index_flagstat
 			file "*log" into ch_samblaster_for_multiqc
+			
 			
 			script:
 			def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
@@ -1213,7 +1245,6 @@ if( params.aligner == 'biscuit' ){
 		file "${samblaster_bam.baseName}_stats_report.txt" into ch_samtools_stats_results_biscuit_for_multiqc
 		file "where_are_my_files.txt"
 		
-
 		script:
 		def avail_mem = task.memory ? ((task.memory.toGiga() - 6) / task.cpus).trunc() : false
 		def sort_mem = avail_mem && avail_mem > 2 ? "-m ${avail_mem}G" : ''
@@ -1227,6 +1258,7 @@ if( params.aligner == 'biscuit' ){
 		samtools stats ${samblaster_bam.baseName}.sorted.bam > ${samblaster_bam.baseName}_stats_report.txt
 		"""
 	}
+}
 
 	
 	/*
@@ -1491,7 +1523,7 @@ process qualimap {
 		-outdir ${bam.baseName}_qualimap \\
 		--collect-overlap-pairs \\
 		--java-mem-size=${task.memory.toGiga()}G \\
-		-nt ${task.cpus}
+		-nt ${task.cpus} || true
 
 	"""	
 }
