@@ -23,6 +23,8 @@ def helpMessage() {
 	  --aligner [str]                   Alignment tool to use (default: bismark)
 											Available: bismark, bismark_hisat, bwameth, biscuit
 	  --reads [file]                    Path to input data (must be surrounded with quotes)
+	  --merge_reads						Specifies that input are many fastq files that need to be merged. Merging by basename that ends in the first '--separator'
+	  --separator						The separator for defining the base file name for merging. Defaulat is: '_'
 	  --bams [file] 					Path to input bam files data, downstream analysis via biscuit aligner. Files must be sorted by coordinates, indexed and duplicate-marked. If this parameter is set, the '--reads' is ignored.
 	  -profile [str]                    Configuration profile to use. Can use multiple (comma separated)
 											Available: conda, docker, singularity, test, awsbatch, <institute> and more
@@ -116,6 +118,8 @@ params.bismark_index = params.genome ? params.genomes[ params.genome ].bismark ?
 params.bwa_meth_index = params.genome ? params.genomes[ params.genome ].bwa_meth ?: false : false
 params.fasta = params.genome ? params.genomes[ params.genome ].fasta ?: false : false
 params.fasta_index = params.genome ? params.genomes[ params.genome ].fasta_index ?: false : false
+params.merge_reads=false
+params.separator='_L'
 assembly_name = (params.fasta.toString().lastIndexOf('/') == -1) ?: params.fasta.toString().substring( params.fasta.toString().lastIndexOf('/')+1)
 
 // Check if genome exists in the config file
@@ -272,11 +276,47 @@ if (params.readPaths) {
 			.ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
 			.into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
 	}
-} else if (params.reads) {	
-	Channel
-		.fromFilePairs( params.reads, size: params.single_end ? 1 : 2 )
-		.ifEmpty { exit 1, "Cannot find any reads matching: ${params.reads}\nNB: Path needs to be enclosed in quotes!\nIf this is single-end data, please specify --single_end on the command line." }
-		.into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
+} else if (params.reads) {
+	if (!params.merge_reads) {
+		Channel
+			.fromFilePairs( params.reads, size: params.single_end ? 1 : 2 )
+			.ifEmpty { exit 1, "Cannot find any reads matching: ${params.reads}\nNB: Path needs to be enclosed in quotes!\nIf this is single-end data, please specify --single_end on the command line." }
+			.into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
+	}
+	else { //many reads, needs to be merged
+		Channel
+			.fromFilePairs( params.reads )
+			.ifEmpty { exit 1, "Cannot find any reads matching: ${params.reads}\nNB: Path needs to be enclosed in quotes!\nIf this is single-end data, please specify --single_end on the command line." }
+			.map { row -> tuple(row[0].substring(0,row[0].indexOf(params.separator)), file(row[1][0]),file(row[1][1])) }
+			//.flatMap { key, files -> [  ["${key.substring(0,key.indexOf('___'))}_1.fastq.gz",  files[0]  ],["${key.substring(0,key.indexOf('___'))}_2.fastq.gz", files[1] ] ] }
+
+			// .collectFile() 
+			// //.toList() 
+			// .buffer(size: 2)  
+			// .map { row -> [row[0].simpleName - ~/(_1)/ , [ file(row[0]), file(row[1]) ] ] }
+			// .into { ch_read_files_for_fastqc; ch_read_files_for_trim_galore }
+				 .groupTuple()
+		.set { ch_concatinate_fastq}
+		
+		process concatenate_fastq {    
+			tag "$name"
+
+			input:
+			set val(name), file(read1), file(read2) from ch_concatinate_fastq 
+
+			output:
+			set val(name), file('*fastq.gz') into ch_read_files_for_fastqc,ch_read_files_for_trim_galore
+
+			script:
+			"""
+			cat $read1 > ${name}_1.fastq.gz
+			cat $read2 > ${name}_2.fastq.gz		  
+			"""
+		}
+  
+
+	}
+	
 } else {
 	ch_read_files_for_fastqc = Channel.empty() 
 	ch_read_files_for_trim_galore = Channel.empty() 
@@ -1283,7 +1323,6 @@ if( params.aligner == 'biscuit' || params.bams ){
 				 
 	    script:
 		filter_duplication = params.skip_deduplication || params.rrbs ? '-u' : ''
-		all_contexts = params.comprehensive ? 'c, cg, ch, hcg, gch' : 'cg'
 		"""
 		biscuit pileup  -q ${task.cpus} $filter_duplication $fasta ${bam} -o ${name}.vcf 
 		bgzip -@ ${task.cpus} -f ${name}.vcf
