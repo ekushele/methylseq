@@ -103,12 +103,14 @@ void convert_epiread(ofstream& merged_epiread) {
 			first_in_pair = true; //next row will be first row
 		}
 		
-        // process couple of lines. write to stdout
-        //merge_paired_and_print(row1, row2,genome_cpg);
-	  merge_paired_and_print(row1, row2,merged_epiread);
-
-    }
-    //print_stats_msg();
+		// process couple of lines
+		try {
+			  merge_paired_and_print(row1, row2,merged_epiread);
+		} catch (std::exception &e) {
+			cerr << "Failed! exception:" << endl;
+			cerr << e.what() << endl;
+		}
+	}
 }
 
 
